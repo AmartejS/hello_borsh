@@ -19,6 +19,8 @@ import {getPayer, getRpcUrl, createKeypairFromFile} from './utils';
 import * as BufferLayout from '@solana/buffer-layout';
 import { Buffer } from 'buffer';
 import * as readline from 'readline';
+//import * as readline from 'node:readline/promises';
+import { stdin as input, stdout as output } from 'process';
 /**
  * Connection to the networkx
  */
@@ -94,12 +96,40 @@ class GreetingAccount {
   }
 }
 
+
+class instructiondataset {
+  account_address = "";
+ constructor(fields: {account_address: string} | undefined = undefined) 
+ {
+    if (fields) {
+      this.account_address = fields.account_address;
+     
+    }
+  }
+}
+
+/**
+ * Borsh schema definition for greeting accounts
+ */
+ const GreetingSchema = new Map([
+  [GreetingAccount, {kind: 'struct', fields: [['inputA', 'u32'], ['inputB', 'u32'] ]}],
+]);
+
+
 /**
  * Borsh schema definition for greeting accounts
  */
 const SecondAccountSchema = new Map([
   [SecondAccount, {kind: 'struct', fields: [['customdata1', 'u32'], ['customdata2', 'u32'] ]}],
 ]);
+
+/**
+ * Borsh schema definition for instruction
+ */
+ const InstructionSchema = new Map([
+  [instructiondataset, {kind: 'struct', fields: [['account_address', 'string'] ]}],
+]);
+
 
 /**
  * The expected size of each greeting account.
@@ -109,22 +139,14 @@ const SECOND_ACCOUNT_SIZE = borsh.serialize(
   new SecondAccount(),
 ).length;
 
-/**
- * Borsh schema definition for greeting accounts
- */
- const GreetingSchema = new Map([
-  [GreetingAccount, {kind: 'struct', fields: [['inputA', 'u32'], ['inputB', 'u32'] ]}],
-]);
 
 /**
  * The expected size of each greeting account.
  */
-const instructiondata= new GreetingAccount();
-instructiondata.inputA=17;
-instructiondata.inputB=9999;
+
 const GREETING_SIZE = borsh.serialize(
   GreetingSchema,
-  instructiondata,
+  new GreetingAccount(),
 ).length;
 
 /**
@@ -173,14 +195,14 @@ export async function establishPayer(): Promise<void> {
     'SOL to pay for fees',
   );
 }
-export async function createAccount(seed:any,size:any,lamports:any)
+export async function createAccount(seed:any,size:any,lamports:any,key:any)
 {
   const transaction = new Transaction().add(
     SystemProgram.createAccountWithSeed({
       fromPubkey: payer.publicKey,
       basePubkey: payer.publicKey,
       seed: seed,
-      newAccountPubkey: greetedPubkey,
+      newAccountPubkey: key,
       lamports,
       space: size,
       programId,
@@ -223,8 +245,8 @@ export async function checkProgram(): Promise<void> {
   console.log(`Using program ${programId.toBase58()}`);
 
   // Derive the address (public key) of a greeting account from the program so that it's easy to find later.
-  const GREETING_SEED = ' two number sum';
-  const SECOND_ACCOUNT_SEED = "Testing Account iterator"
+  const GREETING_SEED = ' New Account 1';
+  const SECOND_ACCOUNT_SEED = "New Account 2"
   greetedPubkey = await PublicKey.createWithSeed(
     payer.publicKey,
     GREETING_SEED,
@@ -249,7 +271,7 @@ console.log('second pubkey',secondPubkey)
     const lamports = await connection.getMinimumBalanceForRentExemption(
       GREETING_SIZE,
     );
-      createAccount(GREETING_SEED,GREETING_SIZE,lamports);
+      createAccount(GREETING_SEED,GREETING_SIZE,lamports,greetedPubkey);
     
     
   }
@@ -266,41 +288,17 @@ console.log('second pubkey',secondPubkey)
       SECOND_ACCOUNT_SIZE,
     );
 
-    createAccount(SECOND_ACCOUNT_SEED,SECOND_ACCOUNT_SIZE,lamports);
+    createAccount(SECOND_ACCOUNT_SEED,SECOND_ACCOUNT_SIZE,lamports,secondPubkey);
   }
 }
 
-function createInstructionData(): Buffer {
+function createInstructionData(address:string): Buffer {
+  const instructiondata= new instructiondataset();
+  instructiondata.account_address=address;
+  const data = Buffer.from(borsh.serialize(InstructionSchema,instructiondata));
+  console.log('buffer data: ', data);
+  return data;
 
-  // const jsonObject = {
-  //   "A":'29',
-  //   "B":'28',
-  //   "C":'IT'
-  // }
-  const msg = '{"name":"John", "age":"22"}';
-var jsonObj = JSON.parse(msg);
- 
-// convert JSON object to String
-var jsonStr = JSON.stringify(jsonObj);
- 
-// read json string to Buffer
-const buf = Buffer.from(jsonStr);
- 
-// console.log(buf.length);
-
-  const dataLayout = BufferLayout.struct([
-    BufferLayout.u8('A'),BufferLayout.u8('B')
-  ],
-  );
-
-  const data = Buffer.alloc(dataLayout.span);
-  dataLayout.encode({
-    A: 23,
-    B: 24
-  }, data);
-console.log('data:------->', data )
-console.log('buffer data: ', jsonObj);
-  return data ;
 }
 
 /**
@@ -316,14 +314,13 @@ export async function sayHello(): Promise<void> {
 //   programId,
 //   data: Buffer.from(JSON.stringify({a: 25, b: 36, res: 0}) ), // All instructions are hellos
 // });
-  
+
+//console.log('pubkey---->',greetedPubkey.toBase58());
+
 const instruction = new TransactionInstruction({
     keys: [{pubkey: greetedPubkey, isSigner: false, isWritable: true},{pubkey: secondPubkey, isSigner: false, isWritable: true}],
     programId,
-    data: Buffer.from(borsh.serialize(
-      GreetingSchema,
-      instructiondata,
-    )), 
+    data: createInstructionData("HDCyevmcG5jJLLbfwc3gRuo1GEBXEaQ2cfRk7ZmGevwq"),
   });
 
   await sendAndConfirmTransaction(
@@ -333,27 +330,3 @@ const instruction = new TransactionInstruction({
   );
 }
 
-/**
- * Report the number of times the greeted account has been said hello to
- */
-export async function reportGreetings(): Promise<void> {
-  const accountInfo = await connection.getAccountInfo(greetedPubkey);
- 
-  if (accountInfo === null) {
-    throw 'Error: cannot find the greeted account';
-  }
-  // const greeting = borsh.deserialize(
-  //   GreetingSchema,
-  //   GreetingAccount,
-  //   accountInfo.data,
-  // );
- 
-  //console.log("accountinfo", greeting);
-  console.log(
-    //greetedPubkey.toBase58(),
-    //'has been greeted',
-    'the sum of the two numbers is =>',
-    //greeting.sum,
-    //'time(s)',
-  );
-}
